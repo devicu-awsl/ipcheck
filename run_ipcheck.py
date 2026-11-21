@@ -18,9 +18,7 @@ from packaging.version import Version
 
 REPOSITORY = "devicu-awsl/ipcheck"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
-PACKAGE_VERSION = version("ai-ipcheck")
-# The second Windows build of 0.3.1 fixes the updater without changing the PyPI package.
-RELEASE_VERSION = "0.3.1.post1" if PACKAGE_VERSION == "0.3.1" else PACKAGE_VERSION
+RELEASE_VERSION = version("ai-ipcheck")
 VERSION_FLAGS = {"--version", "-v", "-V"}
 APPLY_UPDATE = """
 $ErrorActionPreference = 'Stop'
@@ -61,22 +59,26 @@ def sha256(path):
         return hashlib.file_digest(file, "sha256").hexdigest()
 
 
-def find_update(release, installed):
+def find_update(release, installed, installed_digest):
     tag = release["tag_name"]
-    if not tag.startswith("v") or Version(tag[1:]) <= installed:
+    if not tag.startswith("v") or Version(tag[1:]) < installed:
         return None
 
     asset_tag = tag.replace("!", "-epoch-").replace("+", "-local-")
-    name = f"ipcheck-{asset_tag}.exe"
+    names = {f"ipcheck{separator}{asset_tag}.exe" for separator in (" ", ".", "-")}
     for asset in release["assets"]:
         digest = asset.get("digest") or ""
         if (
-            asset["name"] == name
+            asset["name"] in names
             and asset["state"] == "uploaded"
             and re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
         ):
+            digest = digest.removeprefix("sha256:")
+            if digest == installed_digest:
+                return None
+            name = quote(asset["name"], safe="")
             url = f"https://github.com/{REPOSITORY}/releases/download/{quote(tag, safe='')}/{name}"
-            return url, int(asset["size"]), digest.removeprefix("sha256:")
+            return url, int(asset["size"]), digest
     return None
 
 
@@ -87,12 +89,13 @@ def check_for_update():
     )
     with urlopen(request, timeout=8) as response:
         release = json.load(response)
-    update = find_update(release, Version(RELEASE_VERSION))
+    target = Path(sys.executable).resolve()
+    installed_digest = sha256(target)
+    update = find_update(release, Version(RELEASE_VERSION), installed_digest)
     if update is None:
         return
 
     url, size, digest = update
-    target = Path(sys.executable).resolve()
     stage = Path(tempfile.mkdtemp(prefix=".ipcheck-update-", dir=target.parent))
     try:
         download = stage / "next.exe"
@@ -120,7 +123,7 @@ def check_for_update():
                 "IPCHECK_UPDATE_STAGE": str(stage),
                 "IPCHECK_UPDATE_TARGET": str(target),
                 "IPCHECK_UPDATE_LAUNCHER": str(os.getppid()),
-                "IPCHECK_UPDATE_OLD_SHA": sha256(target),
+                "IPCHECK_UPDATE_OLD_SHA": installed_digest,
                 "IPCHECK_UPDATE_NEW_SHA": digest,
             },
         )
