@@ -1,0 +1,136 @@
+name: Auto Build ipcheck.exe
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 1'
+
+permissions: {}
+
+concurrency:
+  group: ipcheck-windows-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      asset: ${{ steps.package.outputs.asset }}
+      build_needed: ${{ steps.release.outputs.build_needed }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          architecture: x64
+
+      - name: Install the latest PyPI release
+        id: package
+        run: |
+          python -m pip install --upgrade ai-ipcheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = python -c "from importlib.metadata import version; print(version('ai-ipcheck'))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($version -notmatch '^[0-9][0-9A-Za-z.!+_-]*$') {
+            throw "Unexpected package version: $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "asset=ipcheck-v$($version.Replace('!', '-epoch-').Replace('+', '-local-')).exe" >> $env:GITHUB_OUTPUT
+
+      - name: Check for a published Windows asset
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        run: |
+          $tag = [Uri]::EscapeDataString("v$env:VERSION")
+          $path = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $response = Invoke-WebRequest -Uri $path -Headers $headers -SkipHttpErrorCheck
+          switch ([int]$response.StatusCode) {
+            200 {
+              $release = $response.Content | ConvertFrom-Json
+              $asset = $release.assets | Where-Object {
+                $_.name -eq $env:ASSET -and $_.state -eq 'uploaded' -and
+                $_.digest -match '^sha256:[a-f0-9]{64}$'
+              }
+              if (-not $asset) { throw "Release v$env:VERSION is missing its verified Windows asset." }
+              "build_needed=false" >> $env:GITHUB_OUTPUT
+              Write-Host "Skipping v$env:VERSION because the Windows asset is already published."
+            }
+            404 { "build_needed=true" >> $env:GITHUB_OUTPUT }
+            default { throw "GitHub release lookup failed with HTTP $($response.StatusCode)." }
+          }
+
+      - name: Build and smoke-test the Windows executable
+        if: steps.release.outputs.build_needed == 'true'
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        run: |
+          python -m pip install pyinstaller==6.22.3 packaging
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $name = [IO.Path]::GetFileNameWithoutExtension($env:ASSET)
+          python -m PyInstaller --onefile --clean --name "$name" --copy-metadata ai-ipcheck --collect-data tzdata run_ipcheck.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $result = & ".\dist\$env:ASSET" --version
+          if ($LASTEXITCODE -ne 0 -or ($result | Out-String).Trim() -ne "ipcheck $env:VERSION") {
+            throw "The executable failed its version smoke test. Output: $result"
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: steps.release.outputs.build_needed == 'true'
+        with:
+          name: ipcheck-windows
+          path: dist/${{ steps.package.outputs.asset }}
+          if-no-files-found: error
+          overwrite: true
+
+  publish:
+    needs: build
+    if: needs.build.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ipcheck-windows
+          path: dist
+
+      - name: Upload the asset before publishing the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          ASSET: ${{ needs.build.outputs.asset }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9][0-9A-Za-z.!+_-]*$ ]]
+          [[ "$ASSET" =~ ^ipcheck-v[0-9][0-9A-Za-z._-]*\.exe$ ]]
+          tag="v$VERSION"
+          asset="dist/$ASSET"
+          drafts=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft) | .tag_name')
+          if ! grep -Fxq "$tag" <<< "$drafts"; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "ipcheck $tag" --notes "Windows x64 build of ai-ipcheck $VERSION from PyPI." --draft
+          fi
+          gh release upload "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --clobber
+          local_digest=$(sha256sum "$asset" | cut -d ' ' -f 1)
+          release_id=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json databaseId --jq .databaseId)
+          remote_digest=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" \
+            --jq '.[] | select(.state == "uploaded") | [.name, .digest] | @tsv' \
+            | awk -F '\t' -v name="$ASSET" '$1 == name { print $2 }')
+          if [[ "$remote_digest" != "sha256:$local_digest" ]]; then
+            echo "::error::Uploaded executable SHA-256 did not match the build."
+            exit 1
+          fi
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
