@@ -12,4 +12,6 @@ After a diagnostic run, ipcheck checks the public releases for a newer version. 
 
 ## Build and release
 
-[Auto Build ipcheck.exe](https://github.com/devicu-awsl/ipcheck/actions/workflows/build-ipcheck.yml) runs on Mondays at 00:00 UTC. To run it on demand, select **Run workflow** on the `main` branch. It builds the latest stable PyPI package compatible with Python 3.11 and publishes a versioned release after the Windows executable passes a version check. If the release for that version already has its verified Windows asset, the run skips the build.
+[Auto Build ipcheck.exe](https://github.com/devicu-awsl/ipcheck/actions/workflows/build-ipcheck.yml) runs on Mondays at 00:00 UTC. To run it on demand, select **Run workflow** on the `main` branch. It builds the latest stable PyPI package compatible with Python 3.13 and publishes a versioned release after the Windows executable passes a version check. If the release for that version already has its verified Windows asset, the run skips the build.
+
+This project relies entirely on the original ipcheck project created by @stormzhang for its diagnostic functionality. [https://github.com/stormzhang/ipcheck](https://github.com/stormzhang/ipcheck)
