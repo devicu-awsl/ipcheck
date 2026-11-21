@@ -133,6 +133,19 @@ def check_for_update():
     print(f"ipcheck {release['tag_name']} is ready to install after exit.")
 
 
+def test_again():
+    from msvcrt import getwch
+
+    print("Press Y to test again or any other key to exit.", flush=True)
+    try:
+        key = getwch()
+        if key in ("\x00", "\xe0"):
+            getwch()
+    except KeyboardInterrupt:
+        return False
+    return key.lower() == "y"
+
+
 def run():
     from ipcheck.cli import main
 
@@ -140,7 +153,11 @@ def run():
         print(f"ipcheck {RELEASE_VERSION}")
         return 0
 
+    interactive = sys.platform == "win32" and sys.stdin.isatty() and sys.stdout.isatty()
     result = main()
+    while interactive and test_again():
+        result = main()
+
     if (
         sys.platform == "win32"
         and getattr(sys, "frozen", False)

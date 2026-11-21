@@ -8,7 +8,7 @@ Download `ipcheck v<version>.exe` from the [latest release](https://github.com/d
 
 From PowerShell, run `.\ipcheck.exe` for the diagnostic report or `.\ipcheck.exe --version` to check the installed version.
 
-After a diagnostic run, ipcheck checks the public releases for a newer version or a replacement build of the installed version. It verifies the download against GitHub's SHA-256 and replaces the saved executable after the process exits. The next launch uses the new version. To skip the update check in a PowerShell session, run `$env:IPCHECK_NO_UPDATE = '1'` before starting ipcheck.
+The report stays visible in an interactive Windows console. Press **Y** to test again or any other key to exit. When you exit, ipcheck checks the public releases for a newer version or a replacement build of the installed version. It verifies the download against GitHub's SHA-256 and replaces the saved executable after the process exits. The next launch uses the new version. To skip the update check in a PowerShell session, run `$env:IPCHECK_NO_UPDATE = '1'` before starting ipcheck.
 
 ## Build and release
 
