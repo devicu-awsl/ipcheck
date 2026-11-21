@@ -86,7 +86,7 @@ jobs:
             throw "The executable failed its version smoke test. Output: $result"
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.release.outputs.build_needed == 'true'
         with:
           name: ipcheck-windows
@@ -101,7 +101,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ipcheck-windows
           path: dist
@@ -125,8 +125,8 @@ jobs:
           fi
           gh release upload "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --clobber
           local_digest=$(sha256sum "$asset" | cut -d ' ' -f 1)
-          release_id=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json databaseId --jq .databaseId)
-          remote_digest=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" \
+          release_api_url=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json apiUrl --jq .apiUrl)
+          remote_digest=$(gh api --paginate "$release_api_url/assets" \
             --jq '.[] | select(.state == "uploaded") | [.name, .digest] | @tsv' \
             | awk -F '\t' -v name="$ASSET" '$1 == name { print $2 }')
           if [[ "$remote_digest" != "sha256:$local_digest" ]]; then
