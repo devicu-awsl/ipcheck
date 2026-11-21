@@ -13,12 +13,14 @@ from importlib.metadata import version
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from ipcheck.cli import main
 from packaging.version import Version
 
 
 REPOSITORY = "devicu-awsl/ipcheck"
 LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+PACKAGE_VERSION = version("ai-ipcheck")
+# The second Windows build of 0.3.1 fixes the updater without changing the PyPI package.
+RELEASE_VERSION = "0.3.1.post1" if PACKAGE_VERSION == "0.3.1" else PACKAGE_VERSION
 VERSION_FLAGS = {"--version", "-v", "-V"}
 APPLY_UPDATE = """
 $ErrorActionPreference = 'Stop'
@@ -85,7 +87,7 @@ def check_for_update():
     )
     with urlopen(request, timeout=8) as response:
         release = json.load(response)
-    update = find_update(release, Version(version("ai-ipcheck")))
+    update = find_update(release, Version(RELEASE_VERSION))
     if update is None:
         return
 
@@ -105,6 +107,8 @@ def check_for_update():
         )
         # Let Windows PowerShell use its own DLL search path.
         ctypes.windll.kernel32.SetDllDirectoryW(None)
+        # Windows PowerShell needs its own module path when called from PowerShell 7.
+        env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
         subprocess.Popen(
             [str(powershell), "-NoProfile", "-NonInteractive", "-Command", APPLY_UPDATE],
             stdin=subprocess.DEVNULL,
@@ -112,7 +116,7 @@ def check_for_update():
             stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW,
             env={
-                **os.environ,
+                **env,
                 "IPCHECK_UPDATE_STAGE": str(stage),
                 "IPCHECK_UPDATE_TARGET": str(target),
                 "IPCHECK_UPDATE_LAUNCHER": str(os.getppid()),
@@ -127,11 +131,16 @@ def check_for_update():
 
 
 def run():
+    from ipcheck.cli import main
+
+    if sys.argv[1:2] and sys.argv[1] in VERSION_FLAGS:
+        print(f"ipcheck {RELEASE_VERSION}")
+        return 0
+
     result = main()
     if (
         sys.platform == "win32"
         and getattr(sys, "frozen", False)
-        and not VERSION_FLAGS.intersection(sys.argv[1:2])
         and os.environ.get("IPCHECK_NO_UPDATE") != "1"
     ):
         try:
